@@ -790,6 +790,19 @@ tier_full() {
         record FAIL "full: --list-sessions exits 0 and lists sessions" "exit $rc (see $log)"
     fi
 
+    # A run killed during dnf install leaves only the request in the journal (#44); a
+    # package named twice (requested, then installed as NAME.ARCH) is removed once.
+    log="$ARTIFACTS/full_rollback_killed_install.log"
+    rc=0
+    fx bash -c 'dnf install -y -q tree >/dev/null 2>&1 && d=/root/harden-backups-20000101-000001 && mkdir -p "$d" &&
+        printf "2000-01-01 00:00:01|PKG_INSTALL_START|tree\n2000-01-01 00:00:02|PKG_INSTALL|tree.%s\n" "$(rpm -q --qf %{ARCH} tree)" >"$d/.rollback-journal"'
+    fx "$FH_DIR/fedora-harden.sh" --yes --rollback 20000101-000001 >"$log" 2>&1 || rc=$?
+    if ! fx rpm -q tree >/dev/null 2>&1 && (($(grep -c 'PKG_REMOVE  tree' "$log") <= 1)) && grep -q 'Packages removed' "$log"; then
+        record PASS "full: rollback removes a package journalled only before dnf ran, once"
+    else
+        record FAIL "full: rollback removes a package journalled only before dnf ran, once" "exit $rc (see $log)"
+    fi
+
     # Rollback never removes what something outside the session still needs: a fake
     # session claims to have installed libacl, which sed and coreutils depend on.
     log="$ARTIFACTS/full_rollback_keeps_needed.log"

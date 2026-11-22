@@ -9,6 +9,8 @@
 - Community files: a code of conduct (Contributor Covenant 2.1), issue forms for bugs
   and guidance changes, a pull request checklist; DEVELOPMENT.md is now CONTRIBUTING.md,
   with a short "before you start".
+- `--rollback` removes packages from a run killed during `dnf install`: the request is
+  journalled before dnf runs, the full installed set after it (#44).
 
 ## 1.1.0 — 2026-11-19
 
