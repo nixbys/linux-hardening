@@ -310,6 +310,10 @@ pkg_install() {
 		# dependencies included), so --rollback removes exactly what came in.
 		local pkgs_before=""
 		((DRY_RUN)) || pkgs_before="$(rpm -qa --qf '%{NAME}.%{ARCH}\n' 2>/dev/null | sort -u)"
+		# Journal the request first: a run killed mid-transaction (SIGKILL cannot be
+		# trapped, and dnf finishes a running transaction on its own) still leaves an
+		# entry, so --rollback removes what came in. The full set follows below.
+		record_change PKG_INSTALL_START "${needed[*]}"
 		if ! run "dnf install -y ${needed[*]}"; then
 			# A missing/renamed package must not abort every remaining section; the
 			# callers check for the commands they need and skip what is unavailable.
@@ -665,7 +669,7 @@ declare -ga _RB_PKGS=()
 platform_undo_change() {
 	local ctype="$1" detail="$2"
 	case "$ctype" in
-	PKG_INSTALL)
+	PKG_INSTALL | PKG_INSTALL_START)
 		if ((IS_OSTREE)); then
 			if ((DRY_RUN)); then
 				info "Would run: rpm-ostree uninstall $detail"
@@ -780,10 +784,28 @@ platform_undo_finish() {
 	# user's package with it. rpm's own test names every such requirement; keep its
 	# provider and test again until the rest can go.
 	if ((${#rb_pkgs[@]})) && ((! DRY_RUN)); then
-		local -a present=()
+		# One NAME.ARCH per installed package: the journal names a package both as
+		# requested (bare name) and as installed (NAME.ARCH). A requested name can be
+		# only a provide (clamav-update → clamav-freshclam): pkg_install requested it
+		# because nothing provided it before the run, so its provider came in later.
+		local -a present=() query=()
+		local -A seen=()
+		local canon
 		for pname in "${rb_pkgs[@]}"; do
-			rpm -q "$pname" >/dev/null 2>&1 && present+=("$pname")
+			if rpm -q "$pname" >/dev/null 2>&1; then
+				query=("$pname")
+			elif rpm -q --whatprovides "$pname" >/dev/null 2>&1; then
+				query=(--whatprovides "$pname")
+			else
+				continue
+			fi
+			while IFS= read -r canon; do
+				[[ -n "$canon" && -z "${seen[$canon]:-}" ]] || continue
+				seen[$canon]=1
+				present+=("$canon")
+			done < <(rpm -q --qf '%{NAME}.%{ARCH}\n' "${query[@]}" 2>/dev/null)
 		done
+		unset seen
 		rb_pkgs=("${present[@]}")
 		local _try cap prov test_out changed
 		for ((_try = 0; _try < 10 && ${#rb_pkgs[@]} > 0; _try++)); do
