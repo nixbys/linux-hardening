@@ -785,17 +785,25 @@ platform_undo_finish() {
 	# provider and test again until the rest can go.
 	if ((${#rb_pkgs[@]})) && ((! DRY_RUN)); then
 		# One NAME.ARCH per installed package: the journal names a package both as
-		# requested (bare name) and as installed (NAME.ARCH).
-		local -a present=()
+		# requested (bare name) and as installed (NAME.ARCH). A requested name can be
+		# only a provide (clamav-update → clamav-freshclam): pkg_install requested it
+		# because nothing provided it before the run, so its provider came in later.
+		local -a present=() query=()
 		local -A seen=()
 		local canon
 		for pname in "${rb_pkgs[@]}"; do
-			rpm -q "$pname" >/dev/null 2>&1 || continue
+			if rpm -q "$pname" >/dev/null 2>&1; then
+				query=("$pname")
+			elif rpm -q --whatprovides "$pname" >/dev/null 2>&1; then
+				query=(--whatprovides "$pname")
+			else
+				continue
+			fi
 			while IFS= read -r canon; do
 				[[ -n "$canon" && -z "${seen[$canon]:-}" ]] || continue
 				seen[$canon]=1
 				present+=("$canon")
-			done < <(rpm -q --qf '%{NAME}.%{ARCH}\n' "$pname" 2>/dev/null)
+			done < <(rpm -q --qf '%{NAME}.%{ARCH}\n' "${query[@]}" 2>/dev/null)
 		done
 		unset seen
 		rb_pkgs=("${present[@]}")
